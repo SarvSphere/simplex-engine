@@ -7,7 +7,12 @@ int main(){
     cout<<"--- Linear Programming Engine ---\n";
     
     SimplexSolver engine;
-    engine.Solve();
 
+    engine.LoadEquations();
+    engine.AddSlackVariables();
+    engine.PrintTableau();
+    engine.SolveSimplex();
+    engine.PrintResult();
+    
     return 0;
 }
