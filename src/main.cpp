@@ -9,9 +9,7 @@ int main(){
     SimplexSolver engine;
 
     engine.LoadEquations();
-    engine.AddSlackVariables();
-    engine.PrintTableau();
-    engine.SolveSimplex();
+    engine.SolveTwoPhase();
     engine.PrintResult();
     
     return 0;

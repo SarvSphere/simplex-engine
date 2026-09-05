@@ -21,6 +21,11 @@ private:
     std::vector<double>Cj; // Objective function coefficients
     std::vector<double>Cb; // Cost of current basic variables
     std::vector<int>Yb; // Indices of current basic variable
+    std::vector<int>ConstraintSigns;
+    std::vector<double>OriginalCj;
+    std::vector<std::string>VariableNames;
+
+    bool IsPhase1;
 
     // Status of our solution
     SolutionStatus Status;
@@ -39,6 +44,7 @@ public:
     // For passing equations to the engine
     void LoadEquations();
     void AddSlackVariables();
+    void InitializeTwoPhase();
 
     // Core methods
     void SolveSimplex();

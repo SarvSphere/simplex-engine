@@ -1,6 +1,7 @@
 #include "SimplexSolver.h"
 #include <iostream>
 #include <iomanip>
+#include <cmath>
 
 using namespace std;
 
@@ -31,6 +32,13 @@ void SimplexSolver::CalculateNetEvaluation(){
 }
 
 void SimplexSolver::LoadEquations(){
+    // Resetting the engine (Clearing data from previous run)
+    VariableNames.clear();
+    Yb.clear();
+    Cb.clear();
+    Status = SolutionStatus::NOT_SOLVED;
+    IsPhase1 = false;
+
     cout<<"Enter 1 for Maximization Problem\n";
     cout<<"Enter 2 for Minimization Problem\n";
     cout<<"Enter 1 or 2 : ";
@@ -44,6 +52,7 @@ void SimplexSolver::LoadEquations(){
 
     Tableau.assign(NumConstraints + 1,vector<double>(NumVariables + 1,0.0));
     Cj.assign(NumVariables,0.0);
+    ConstraintSigns.assign(NumConstraints,0);
 
     cout<<"Enter the coefficients of the objective function (Cj) : ";
     for(int j=0;j<NumVariables;j++){
@@ -51,12 +60,29 @@ void SimplexSolver::LoadEquations(){
         if(OptType == 2) Cj[j] *= -1;
     }
 
-    cout<<"Enter the constraints (coefficients followed by their RHS value) : \n";
+    cout<<"Enter the constraints (coefficients, then sign [1:<=, 2:>=, 3:=], then RHS) : \n";
     for(int i=0;i<NumConstraints;i++){
         for(int j=0;j<NumVariables;j++){
             cin>>Tableau[i][j];
         }
+
+        cin>>ConstraintSigns[i];
         cin>>Tableau[i][NumVariables];
+
+        if(Tableau[i][NumVariables] < 0){
+            for(int j=0;j<=NumVariables;j++){
+                Tableau[i][j] *= -1;
+            }
+
+            if(ConstraintSigns[i] == 1) ConstraintSigns[i] = 2;
+            else if(ConstraintSigns[i] == 2) ConstraintSigns[i] = 1;
+
+            cout<<"[System] Negative RHS in constraint "<<(i+1)<<". Multiplied by -1 and flipped sign.\n";
+        }
+    }
+
+    for(int j=0;j<NumVariables;j++){
+        VariableNames.push_back("x" + to_string(j+1));
     }
 
     cout<<"\n[System] Equations loaded successfully.\n";
@@ -77,6 +103,65 @@ void SimplexSolver::AddSlackVariables(){
 
         Yb.push_back(NumVariables + i);
         Cb.push_back(0.0);
+
+        VariableNames.push_back("s" + to_string(i+1));
+    }
+
+    CalculateNetEvaluation();
+}
+
+void SimplexSolver::InitializeTwoPhase(){
+    cout<<"\n[System] Initializing Two Phase Method (Phase 1)...\n";
+
+    OriginalCj = Cj;
+
+    for(int j=0;j<NumVariables;j++){
+        Cj[j] = 0;
+    }
+
+    int sCount = 1;
+    int aCount = 1;
+
+    for(int i=0;i<NumConstraints;i++){
+        if(ConstraintSigns[i] == 1){
+            Cj.push_back(0.0);
+            for(int j=0;j<=NumConstraints;j++){
+                double val = (j==i) ? 1.0 : 0.0;
+                Tableau[j].insert(Tableau[j].end() - 1,val);
+            }
+            Yb.push_back(Cj.size()-1);
+            Cb.push_back(0.0);
+            VariableNames.push_back("s" + to_string(sCount++));
+        }
+
+        else if(ConstraintSigns[i] == 2){
+            Cj.push_back(0.0);
+            for(int j=0;j<=NumConstraints;j++){
+                double val = (j==i) ? -1.0 : 0.0;
+                Tableau[j].insert(Tableau[j].end() - 1,val);
+            }
+            VariableNames.push_back("s" + to_string(sCount++));
+            
+            Cj.push_back(-1.0);
+            for(int j=0;j<=NumConstraints;j++){
+                double val = (j == i) ? 1.0 : 0.0;
+                Tableau[j].insert(Tableau[j].end() - 1,val);
+            }
+            Yb.push_back(Cj.size()-1);
+            Cb.push_back(-1.0);
+            VariableNames.push_back("a" + to_string(aCount++));
+        }
+
+        else if(ConstraintSigns[i] == 3){ 
+            Cj.push_back(-1.0);
+            for(int j=0;j<=NumConstraints;j++){
+                double val = (j == i) ? 1.0 : 0.0;
+                Tableau[j].insert(Tableau[j].end() - 1,val);
+            }
+            Yb.push_back(Cj.size()-1);
+            Cb.push_back(-1.0);
+            VariableNames.push_back("a" + to_string(aCount++));
+        }
     }
 
     CalculateNetEvaluation();
@@ -87,9 +172,11 @@ void SimplexSolver::SolveSimplex(){
 
     int TotalCols = Tableau[0].size();
 
+    const double EPSILON = 1e-7;
+
     while(true){
         int PivotCol = -1;
-        double MostNegative = 0.0;
+        double MostNegative = -EPSILON;
 
         for(int j=0;j<TotalCols-1;j++){
             if(Tableau[NumConstraints][j] < MostNegative){
@@ -99,6 +186,7 @@ void SimplexSolver::SolveSimplex(){
         }
 
         if(PivotCol == -1){
+            if(IsPhase1) return;
             if(Status == SolutionStatus::ALTERNATE){
                 break;
             }
@@ -109,27 +197,44 @@ void SimplexSolver::SolveSimplex(){
             }
 
             int AltCol = -1;
-            bool InfiniteSolution = false;
+            bool InfiniteRay = false;
+            bool TrueAlternateVertex = false;
+
             for(int j=0;j<TotalCols-1;j++){
-                if(Tableau[NumConstraints][j] == 0 && !IsBasic[j]){
-                    InfiniteSolution = true;
+                if(abs(Tableau[NumConstraints][j]) < EPSILON && !IsBasic[j]){
+                    InfiniteRay = true;
+
+                    double PreviewMinRatio = 1e9;
                     for(int i=0;i<NumConstraints;i++){
-                        if(Tableau[i][j] > 0){
-                            AltCol = j;
-                            break;
+                        if(Tableau[i][j] > EPSILON){
+                            double Ratio = Tableau[i][TotalCols-1] / Tableau[i][j];
+                            if(Ratio < PreviewMinRatio){
+                                PreviewMinRatio = Ratio;
+                            }
                         }
                     }
+
+                    if(PreviewMinRatio > EPSILON && PreviewMinRatio != 1e9){
+                        AltCol = j;
+                        TrueAlternateVertex = true;
+                        InfiniteRay = false;
+                        break;
+                    }
+                    else if(PreviewMinRatio <= EPSILON && AltCol == -1){
+                        AltCol = j;
+                        InfiniteRay = false;
+                    }
                 }
-                if(AltCol != -1) break;
             }
 
-            if(AltCol != -1){
+            if(AltCol != -1 && TrueAlternateVertex){
                 Status = SolutionStatus::ALTERNATE;
                 cout<<"Result : Alternate (Infinite) Optimal Solutions exist.\n";
                 cout<<"--- First Optimal Solution ---\n";
 
                 double Z = Tableau[NumConstraints][TotalCols-1];
                 if(OptType == 2) Z *= -1;
+                if(abs(Z) < EPSILON) Z = 0.0;
                 cout<<"Optimal Z = "<<Z<<"\n";
 
                 vector<double>DecisionVariables(NumVariables,0.0);
@@ -138,7 +243,9 @@ void SimplexSolver::SolveSimplex(){
                 }
 
                 for(int j=0;j<NumVariables;j++){
-                    cout<<"x"<<(j+1)<<" = "<<DecisionVariables[j]<<"\n";
+                    double val = DecisionVariables[j];
+                    if(abs(val) < EPSILON) val = 0.0;
+                    cout<<"x"<<(j+1)<<" = "<<val<<"\n";
                 }
 
                 cout<<"\n[Engine] Pivoting for second basic feasible solution\n";
@@ -146,13 +253,16 @@ void SimplexSolver::SolveSimplex(){
                 PivotCol = AltCol;
             }
 
-            else if(InfiniteSolution){
+            else if(InfiniteRay){
                 Status = SolutionStatus::ALTERNATE_RAY;
                 break;
             }
 
             else{
                 Status = SolutionStatus::UNIQUE;
+                if(AltCol != -1 && !TrueAlternateVertex){
+                    cout<<"\n[System] Note : Degenerate alternate basis detected, but it will give same vertex (Unique Solution).\n";
+                }
                 break;
             }
         }
@@ -161,7 +271,7 @@ void SimplexSolver::SolveSimplex(){
         double MinRatio = 1e9;
 
         for(int i=0;i<NumConstraints;i++){
-            if(Tableau[i][PivotCol] > 0){
+            if(Tableau[i][PivotCol] > EPSILON){
                 double Ratio = Tableau[i][TotalCols-1] / Tableau[i][PivotCol];
                 if(Ratio < MinRatio){
                     MinRatio = Ratio;
@@ -171,6 +281,7 @@ void SimplexSolver::SolveSimplex(){
         }
 
         if(PivotRow == -1){
+            if(IsPhase1) return;
             Status = SolutionStatus::UNBOUNDED;
             break;
         }
@@ -195,48 +306,152 @@ void SimplexSolver::SolveSimplex(){
             }
         }
 
+        // Fixing floating point errors by forcing phantom zeros to be exactly 0 after row operations
+        for(int i=0;i<=NumConstraints;i++){
+            for(int j=0;j<TotalCols;j++){
+                if(abs(Tableau[i][j]) < EPSILON){
+                    Tableau[i][j] = 0.0;
+                }
+            }
+        }
+
         PrintTableau();
     }
 }
 
 void SimplexSolver::SolveTwoPhase(){
+    bool NeedsPhase1 = false;
+    for(int i=0;i<NumConstraints;i++){
+        if(ConstraintSigns[i] == 2 || ConstraintSigns[i] == 3){
+            NeedsPhase1 = true;
+            break;
+        }
+    }
+
+    if(!NeedsPhase1){
+        cout<<"\n[System] Given problem can be solved by Standard Simplex Method. No need of Two Phase Simplex Method\n";
+
+        AddSlackVariables();
+        PrintTableau();
+        SolveSimplex();
+
+        return;
+    }
+
     cout<<"[Engine] Running Two-Phase Simplex Method...\n";
+
+    // Phase 1
+    IsPhase1 = true;
+    InitializeTwoPhase();
+    PrintTableau();
+
+    SolveSimplex();
+
+    IsPhase1 = false;
+
+    int TotalCols = Tableau[0].size();
+    double Phase1Z = Tableau[NumConstraints][TotalCols-1];
+
+    if(Phase1Z < -1e-5){
+        cout<<"\n[System] Phase 1 is completed. Artificial variables can not be eliminated.\n";
+        Status = SolutionStatus::INFEASIBLE;
+        return;
+    }
+
+    cout<<"\n[System] Phase 1 is completed. Transitioning to Phase 2...\n";
+
+    for(int j=Cj.size()-1;j>=NumVariables;j--){
+        if(Cj[j] == -1.0){
+            bool IsBasic = false;
+            for(int i=0;i<NumConstraints;i++){
+                if(Yb[i] == j){
+                    IsBasic = true;
+                    break;
+                }
+            }
+
+            if(!IsBasic){
+                Cj.erase(Cj.begin()+j);
+                VariableNames.erase(VariableNames.begin() + j);
+                for(int i=0;i<=NumConstraints;i++){
+                    Tableau[i].erase(Tableau[i].begin()+j);
+                }
+
+                for(int i=0;i<NumConstraints;i++){
+                    if(Yb[i] > j) Yb[i]--;
+                }
+            }
+            else{
+                cout<<"[System] Degenerate Artificial Variable detected at column "<<(j+1)<<". Keeping it as dummy variabe for Phase 2.\n";
+                Cj[j] = -1e9;
+            }
+        }
+    }
+
+    for(int j=0;j<NumVariables;j++){
+        Cj[j] = OriginalCj[j];
+    }
+
+    for(int i=0;i<NumConstraints;i++){
+        Cb[i] = Cj[Yb[i]];
+    }
+
+    CalculateNetEvaluation();
+
+    // Phase 2 calculations
+
+    cout<<"[System] Phase 2 Initialised. Running Phase 2 calculations\n";
+    Status = SolutionStatus::NOT_SOLVED;
+    PrintTableau();
+
+    SolveSimplex();
 }
 
 void SimplexSolver::PrintTableau(){
     cout<<"\nPrinting current Simplex tableau...\n\n";
 
-    cout<<"\tCj\t";
+    int W = 18;
+    int CbW = 18;
+    int YbW = 6;
+
+    cout<<setw(CbW + YbW)<<"Cj";
     for(int i=0;i<Cj.size();i++){
-        cout<<Cj[i]<<"\t";
+        cout<<setw(W)<<Cj[i];
     }
     cout<<"\n";
 
-    cout<<"Cb\tYb\t";
+    cout<<setw(CbW)<<"Cb"<<setw(YbW)<<"Yb";
     for(int i=0;i<Cj.size();i++){
-        cout<<"y"<<(i+1)<<"\t";
+        cout<<setw(W)<<VariableNames[i];
     }
 
-    cout<<"Xb\n";
-    cout<<"--------------------------------------------------------\n";
+    cout<<setw(W)<<"Xb\n";
+
+    int LineLen = CbW + YbW + (Cj.size()+1)*W;
+    cout<<string(LineLen,'-')<<"\n";
 
     for(int i=0;i<NumConstraints;i++){
-        cout<<Cb[i]<<"\ty"<<(Yb[i]+1)<<"\t";
+        cout<<setw(CbW)<<Cb[i]<<setw(YbW)<<VariableNames[Yb[i]];
         for(int j=0;j<Tableau[0].size();j++){
-            if(j == Tableau[0].size() - 1) cout<<"| ";
-            cout<<Tableau[i][j]<<"\t";
+            if(j == Tableau[0].size() - 1){
+                cout<<" |"<<setw(W-2)<<Tableau[i][j];
+            }
+            else{
+                cout<<setw(W)<<Tableau[i][j];
+            }
         }
         cout<<"\n";
     }
 
-    cout<<"--------------------------------------------------------\n";
+    cout<<string(LineLen,'-')<<"\n";
 
-    cout<<"Zj-Cj\t\t";
+    cout<<setw(CbW + YbW)<<"Zj-Cj";
+
     for(int i=0;i<Tableau[0].size()-1;i++){
-        cout<<Tableau[NumConstraints][i]<<"\t";
+        cout<<setw(W)<<Tableau[NumConstraints][i];
     }
 
-    cout<<"| Z = "<<Tableau[NumConstraints].back()<<"\n\n";
+    cout<<" |      Z = "<<Tableau[NumConstraints].back()<<"\n\n";
 }
 
 void SimplexSolver::PrintResult(){
