@@ -32,7 +32,6 @@ void SimplexSolver::CalculateNetEvaluation(){
 }
 
 void SimplexSolver::LoadEquations(){
-    // Resetting the engine (Clearing data from previous run)
     VariableNames.clear();
     Yb.clear();
     Cb.clear();
@@ -306,7 +305,6 @@ void SimplexSolver::SolveSimplex(){
             }
         }
 
-        // Fixing floating point errors by forcing phantom zeros to be exactly 0 after row operations
         for(int i=0;i<=NumConstraints;i++){
             for(int j=0;j<TotalCols;j++){
                 if(abs(Tableau[i][j]) < EPSILON){
@@ -340,7 +338,6 @@ void SimplexSolver::SolveTwoPhase(){
 
     cout<<"[Engine] Running Two-Phase Simplex Method...\n";
 
-    // Phase 1
     IsPhase1 = true;
     InitializeTwoPhase();
     PrintTableau();
@@ -397,8 +394,6 @@ void SimplexSolver::SolveTwoPhase(){
     }
 
     CalculateNetEvaluation();
-
-    // Phase 2 calculations
 
     cout<<"[System] Phase 2 Initialised. Running Phase 2 calculations\n";
     Status = SolutionStatus::NOT_SOLVED;
