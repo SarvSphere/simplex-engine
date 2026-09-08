@@ -360,9 +360,13 @@ void SimplexSolver::SolveTwoPhase(){
     for(int j=Cj.size()-1;j>=NumVariables;j--){
         if(Cj[j] == -1.0){
             bool IsBasic = false;
+
+            int BasicRow = -1;
+
             for(int i=0;i<NumConstraints;i++){
                 if(Yb[i] == j){
                     IsBasic = true;
+                    BasicRow = i;
                     break;
                 }
             }
@@ -379,8 +383,46 @@ void SimplexSolver::SolveTwoPhase(){
                 }
             }
             else{
-                cout<<"[System] Degenerate Artificial Variable detected at column "<<(j+1)<<". Keeping it as dummy variabe for Phase 2.\n";
-                Cj[j] = -1e9;
+                cout<<"[System] Redundant constraint detected (Degenerate Artificial Variable at column "<<(j+1)<<"). Deleting row "<<(BasicRow+1)<<" from the tableau.\n";
+                
+                Tableau.erase(Tableau.begin()+BasicRow);
+                Yb.erase(Yb.begin()+BasicRow);
+                Cb.erase(Cb.begin()+BasicRow);
+
+                NumConstraints--;
+
+                for(int i=0;i<=NumConstraints;i++){
+                    Tableau[i].erase(Tableau[i].begin()+j);
+                }
+
+                Cj.erase(Cj.begin()+j);
+                VariableNames.erase(VariableNames.begin()+j);
+
+                for(int i=0;i<NumConstraints;i++){
+                    if(Yb[i] > j) Yb[i]--;
+                }
+            }
+        }
+    }
+
+    for(int j=Cj.size()-1;j>=NumVariables;j--){
+        bool IsPhantom = true;
+        for(int i=0;i<NumConstraints;i++){
+            if(abs(Tableau[i][j]) > 1e-7){
+                IsPhantom = false;
+                break;
+            }
+        }
+
+        if(IsPhantom){
+            cout<<"[System] Phantom variable detected ("<<VariableNames[j]<<") from deleted row. Removing this column.\n";
+            Cj.erase(Cj.begin()+j);
+            VariableNames.erase(VariableNames.begin()+j);
+            for(int i=0;i<=NumConstraints;i++){
+                Tableau[i].erase(Tableau[i].begin()+j);
+            }
+            for(int i=0;i<NumConstraints;i++){
+                if(Yb[i] > j) Yb[i]--;
             }
         }
     }
