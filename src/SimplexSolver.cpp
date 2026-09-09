@@ -383,23 +383,66 @@ void SimplexSolver::SolveTwoPhase(){
                 }
             }
             else{
-                cout<<"[System] Redundant constraint detected (Degenerate Artificial Variable at column "<<(j+1)<<"). Deleting row "<<(BasicRow+1)<<" from the tableau.\n";
-                
-                Tableau.erase(Tableau.begin()+BasicRow);
-                Yb.erase(Yb.begin()+BasicRow);
-                Cb.erase(Cb.begin()+BasicRow);
-
-                NumConstraints--;
-
-                for(int i=0;i<=NumConstraints;i++){
-                    Tableau[i].erase(Tableau[i].begin()+j);
+                int PivotCol = -1;
+                for(int col=0;col<Cj.size();col++){
+                    if(abs(Cj[col] - (-1.0)) > 1e-7 && abs(Tableau[BasicRow][col]) > 1e-7){
+                        PivotCol = col;
+                        break;
+                    }
                 }
 
-                Cj.erase(Cj.begin()+j);
-                VariableNames.erase(VariableNames.begin()+j);
+                if(PivotCol != -1){
+                    cout<<"[System] Degenerate basic artificial variable found at column "<<(j+1)<<" in row "<<(BasicRow+1)<<".\n";
+                    cout<<"[System] Pivoting non-artificial variable "<<VariableNames[PivotCol]<<" in.\n";
 
-                for(int i=0;i<NumConstraints;i++){
-                    if(Yb[i] > j) Yb[i]--;
+                    Yb[BasicRow] = PivotCol;
+                    Cb[BasicRow] = Cj[PivotCol]; 
+
+                    double PivotElement = Tableau[BasicRow][PivotCol];
+
+                    for(int col=0;col<Cj.size()+1;col++){
+                        Tableau[BasicRow][col] /= PivotElement;
+                    }
+
+                    for(int i=0;i<=NumConstraints;i++){
+                        if(i != BasicRow){
+                            double factor = Tableau[i][PivotCol];
+                            for(int col=0;col<Cj.size()+1;col++){
+                                Tableau[i][col] -= factor*Tableau[BasicRow][col];
+                            }
+                        }
+                    }
+
+                    for(int i=0;i<=NumConstraints;i++){
+                        Tableau[i].erase(Tableau[i].begin() + j);
+                    }
+                    Cj.erase(Cj.begin() + j);
+                    VariableNames.erase(VariableNames.begin() + j);
+
+                    for(int i=0;i<NumConstraints;i++){
+                        if(Yb[i] > j) Yb[i]--;
+                    }
+                }
+
+                else{
+                    cout<<"[System] Redundant constraint detected (Degenerate Artificial Variable at column "<<(j+1)<<"). Deleting row "<<(BasicRow+1)<<" from the tableau.\n";
+                    
+                    Tableau.erase(Tableau.begin()+BasicRow);
+                    Yb.erase(Yb.begin()+BasicRow);
+                    Cb.erase(Cb.begin()+BasicRow);
+
+                    NumConstraints--;
+
+                    for(int i=0;i<=NumConstraints;i++){
+                        Tableau[i].erase(Tableau[i].begin()+j);
+                    }
+
+                    Cj.erase(Cj.begin()+j);
+                    VariableNames.erase(VariableNames.begin()+j);
+
+                    for(int i=0;i<NumConstraints;i++){
+                        if(Yb[i] > j) Yb[i]--;
+                    }
                 }
             }
         }
